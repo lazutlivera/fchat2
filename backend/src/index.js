@@ -135,6 +135,35 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Manchester United persona chat endpoint
+app.post('/api/chat/manutd', async (req, res) => {
+  try {
+    const { message, useGrounding = true } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    console.log(`Received Manchester United chat message: ${message}`);
+    console.log(`Grounding enabled: ${useGrounding}`);
+    
+    // Generate Manchester United persona response
+    const aiResponse = await aiService.generateManchesterUnitedResponse(message, useGrounding);
+    
+    // Return response
+    res.status(200).json({
+      text: aiResponse.text,
+      timestamp: aiResponse.timestamp,
+      grounding: aiResponse.grounding,
+      persona: aiResponse.persona,
+      error: aiResponse.error
+    });
+  } catch (error) {
+    console.error('Error in Manchester United chat endpoint:', error);
+    res.status(500).json({ error: 'Failed to process Manchester United chat message' });
+  }
+});
+
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

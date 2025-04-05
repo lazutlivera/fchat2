@@ -90,6 +90,7 @@ if [ "$USE_TUNNEL" = false ]; then
     echo "// Auto-generated connection configuration" > frontend/connectionInfo.js
     echo "export const CONNECTION_INFO = {" >> frontend/connectionInfo.js
     echo "  computerIP: '$IP_ADDR'," >> frontend/connectionInfo.js
+    echo "  tunnelMode: false," >> frontend/connectionInfo.js
     echo "  timestamp: '$(date)'" >> frontend/connectionInfo.js
     echo "};" >> frontend/connectionInfo.js
     
@@ -101,11 +102,22 @@ if [ "$USE_TUNNEL" = false ]; then
 else
   echo "Tunnel mode enabled. Will use remote backend URL from .env or app.config.js"
   
+  # Get PUBLIC_BACKEND_URL from .env
+  PUBLIC_BACKEND_URL=$(grep "^PUBLIC_BACKEND_URL=" .env | cut -d= -f2)
+  
+  if [ -z "$PUBLIC_BACKEND_URL" ]; then
+    echo "WARNING: PUBLIC_BACKEND_URL not found in .env file!"
+    PUBLIC_BACKEND_URL="https://YOUR_PUBLIC_BACKEND_URL"
+  else
+    echo "Using PUBLIC_BACKEND_URL: $PUBLIC_BACKEND_URL"
+  fi
+  
   # Create a connectionInfo file that indicates tunnel mode
   echo "// Auto-generated connection configuration for tunnel mode" > frontend/connectionInfo.js
   echo "export const CONNECTION_INFO = {" >> frontend/connectionInfo.js
   echo "  computerIP: null," >> frontend/connectionInfo.js
   echo "  tunnelMode: true," >> frontend/connectionInfo.js
+  echo "  publicBackendUrl: '$PUBLIC_BACKEND_URL'," >> frontend/connectionInfo.js
   echo "  timestamp: '$(date)'" >> frontend/connectionInfo.js
   echo "};" >> frontend/connectionInfo.js
   
