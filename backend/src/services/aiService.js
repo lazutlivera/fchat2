@@ -6,6 +6,20 @@ const { getClubPersona } = require('./database');
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
 
+// Helper function to retry failed requests
+async function retryOperation(operation, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      console.error(`Attempt ${attempt} failed:`, error.message);
+      if (attempt === maxRetries) throw error;
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+    }
+  }
+}
+
 async function generateResponse(message, useGrounding = true, clubName = null) {
   try {
     // Validate the message first
@@ -36,35 +50,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     // Configure model with search tool
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
-      generationConfig: {
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      },
-    });
-
-    // Create a chat instance with search tool
-    const chat = model.startChat({
-      tools: [{ googleSearch: {} }],
-      safetySettings: [
-        {
-          category: "HARM_CATEGORY_HARASSMENT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_HATE_SPEECH",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        }
-      ]
+      tools: [{ googleSearch: {} }]  // Configure tools here only
     });
 
     // Build the initial prompt with search instructions
@@ -74,9 +60,17 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     }
     searchPrompt += `\n\nUse the Google Search tool to find the most up-to-date information. Return ONLY the raw search results.`;
 
-    // Get search results
-    const searchResponse = await chat.sendMessage(searchPrompt);
-    const searchResults = await searchResponse.response;
+    // Get search results with retry
+    const searchResults = await retryOperation(async () => {
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: searchPrompt }] }],
+        generationConfig: {
+          temperature: 0.1,  // Lower temperature for search
+          maxOutputTokens: 1024,
+        }
+      });
+      return result.response;
+    });
     
     // Build the main prompt
     let prompt = getWallPrompt(clubName);
@@ -98,9 +92,20 @@ Remember to:
 4. Maintain your club persona's personality
 5. Be accurate and up-to-date`;
 
-    // Get final response
-    const finalResponse = await chat.sendMessage(prompt);
-    const response = await finalResponse.response;
+    // Get final response with retry
+    const response = await retryOperation(async () => {
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.95,
+          maxOutputTokens: 1024,
+        }
+      });
+      return result.response;
+    });
+
     let text = response.text();
 
     // Clean up any remaining template markers or tool commands
