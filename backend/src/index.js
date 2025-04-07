@@ -62,14 +62,14 @@ app.post('/api/chat', async (req, res) => {
 app.post('/api/chat/:clubName', async (req, res) => {
   try {
     const { clubName } = req.params;
-    const { message } = req.body;
+    const { message, useGrounding = true } = req.body;
 
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
     // Generate response using club persona from database
-    const response = await generateResponse(message, false, clubName);
+    const response = await generateResponse(message, useGrounding, clubName);
     res.json(response);
   } catch (error) {
     console.error('Error in club persona chat endpoint:', error);
