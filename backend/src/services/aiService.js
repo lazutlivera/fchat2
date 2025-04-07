@@ -48,7 +48,14 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     
     // Add search instruction for factual queries
     if (useGrounding) {
-      prompt += `\n\nIMPORTANT: For any factual information about current events, statistics, or real-world data, please use the Google Search tool to find and cite the most up-to-date information. Always include your sources.`;
+      prompt += `\n\nIMPORTANT INSTRUCTIONS:
+1. For any factual information about matches, events, or statistics, use the Google Search tool to find current information.
+2. NEVER show placeholder text like [Insert X Here] or template markers.
+3. NEVER show any internal tool commands or code in your response.
+4. Always format dates, times, and match information naturally in your response.
+5. If using search results, integrate them smoothly into your response.
+6. Maintain your club persona's personality while delivering factual information.
+7. If you can't find specific information, be honest about it rather than using placeholders.`;
     }
     
     prompt += `\n\nUser: ${message}`;
@@ -83,7 +90,14 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     });
 
     const response = await result.response;
-    const text = response.text();
+    let text = response.text();
+
+    // Clean up any remaining template markers or tool commands
+    text = text.replace(/\*\*\[Insert[^\]]+\]\*\*/g, '')  // Remove template markers
+             .replace(/\*tool_code[\s\S]*?\*\*/g, '')      // Remove tool code blocks
+             .replace(/```[\s\S]*?```/g, '')              // Remove code blocks
+             .replace(/\n{3,}/g, '\n\n')                  // Clean up excessive newlines
+             .trim();
 
     // Extract grounding metadata if available
     let grounding = null;
