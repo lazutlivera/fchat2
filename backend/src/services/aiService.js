@@ -34,7 +34,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     }
 
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-pro",
+      model: "gemini-2.0-flash",
       tools: useGrounding ? [{ googleSearch: {} }] : undefined
     });
 
