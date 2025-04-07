@@ -4,6 +4,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const { generateResponse } = require('./services/aiService');
 const { connectToDatabase, createClubPersona, getClubPersona, getAllClubPersonas } = require('./services/database');
+const mongoose = require('mongoose');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -15,7 +16,16 @@ console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
 console.log('GOOGLE_GEMINI_API_KEY exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
 
 // Connect to MongoDB
-connectToDatabase().catch(console.error);
+connectToDatabase()
+  .then(async () => {
+    // Check if we have any club personas
+    const personas = await getAllClubPersonas();
+    console.log(`Found ${personas.length} club personas in database`);
+    if (personas.length === 0) {
+      console.log('No club personas found. You may need to run the seed script.');
+    }
+  })
+  .catch(console.error);
 
 // Middleware
 app.use(cors({
@@ -95,13 +105,22 @@ app.post('/api/clubs', async (req, res) => {
 app.get('/api/clubs', async (req, res) => {
   console.log('Received request to /api/clubs');
   try {
+    console.log('Checking MongoDB connection status:', mongoose.connection.readyState);
+    if (mongoose.connection.readyState !== 1) {
+      console.error('MongoDB is not connected. Current state:', mongoose.connection.readyState);
+      throw new Error('Database not connected');
+    }
+    
     console.log('Attempting to fetch club personas');
     const personas = await getAllClubPersonas();
     console.log('Successfully fetched club personas:', personas);
     res.json(personas);
   } catch (error) {
     console.error('Error in /api/clubs endpoint:', error);
-    res.status(500).json({ error: 'Failed to get club personas' });
+    res.status(500).json({ 
+      error: 'Failed to get club personas',
+      details: error.message 
+    });
   }
 });
 

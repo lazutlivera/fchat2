@@ -34,7 +34,8 @@ async function connectToDatabase() {
       throw new Error('MONGODB_URI is not defined in environment variables');
     }
 
-    console.log('Attempting to connect to MongoDB with URI:', uri.replace(/\/\/[^@]+@/, '//****:****@'));
+    console.log('Attempting to connect to MongoDB...');
+    console.log('MongoDB URI:', uri.replace(/\/\/[^@]+@/, '//****:****@'));
     
     await mongoose.connect(uri, {
       useNewUrlParser: true,
