@@ -8,6 +8,12 @@ const { connectToDatabase, createClubPersona, getClubPersona, getAllClubPersonas
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Check environment variables
+console.log('Checking environment variables...');
+console.log('PORT:', process.env.PORT);
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
+console.log('GOOGLE_GEMINI_API_KEY exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
+
 // Connect to MongoDB
 connectToDatabase().catch(console.error);
 
@@ -87,11 +93,14 @@ app.post('/api/clubs', async (req, res) => {
 });
 
 app.get('/api/clubs', async (req, res) => {
+  console.log('Received request to /api/clubs');
   try {
+    console.log('Attempting to fetch club personas');
     const personas = await getAllClubPersonas();
+    console.log('Successfully fetched club personas:', personas);
     res.json(personas);
   } catch (error) {
-    console.error('Error getting club personas:', error);
+    console.error('Error in /api/clubs endpoint:', error);
     res.status(500).json({ error: 'Failed to get club personas' });
   }
 });

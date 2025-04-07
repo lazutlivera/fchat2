@@ -30,9 +30,12 @@ async function connectToDatabase() {
   try {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
+      console.error('MONGODB_URI is not defined in environment variables');
       throw new Error('MONGODB_URI is not defined in environment variables');
     }
 
+    console.log('Attempting to connect to MongoDB with URI:', uri.replace(/\/\/[^@]+@/, '//****:****@'));
+    
     await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true
@@ -71,7 +74,10 @@ async function getClubPersona(clubName) {
 
 async function getAllClubPersonas() {
   try {
-    return await ClubPersona.find({});
+    console.log('Attempting to fetch all club personas');
+    const personas = await ClubPersona.find({});
+    console.log(`Successfully fetched ${personas.length} club personas`);
+    return personas;
   } catch (error) {
     console.error('Error getting all club personas:', error);
     throw error;
