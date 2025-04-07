@@ -21,7 +21,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
 
     // If club name is provided, get the club persona from database
     let clubPersona = null;
-    if (clubName) {
+    if (clubName && clubName !== 'false') {
       clubPersona = await getClubPersona(clubName);
       if (!clubPersona) {
         return {
@@ -107,7 +107,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       text: null,
       timestamp: new Date().toISOString(),
       grounding: null,
-      error: error.message
+      error: error.message || 'Failed to generate response'
     };
   }
 }
