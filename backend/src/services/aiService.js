@@ -33,13 +33,29 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       }
     }
 
-    const model = genAI.getGenerativeModel({ 
+    // Configure the model with search as a tool
+    const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       tools: useGrounding ? [{ googleSearch: {} }] : undefined
     });
 
-    const chat = model.startChat({
-      history: [],
+    // Build the prompt with wall prompts and club persona if available
+    let prompt = getWallPrompt(clubName);
+    
+    if (clubPersona) {
+      prompt += `\n\n${clubPersona.personalityPrompt}`;
+    }
+    
+    // Add search instruction for factual queries
+    if (useGrounding) {
+      prompt += `\n\nIMPORTANT: For any factual information about current events, statistics, or real-world data, please use the Google Search tool to find and cite the most up-to-date information. Always include your sources.`;
+    }
+    
+    prompt += `\n\nUser: ${message}`;
+
+    // Generate content with search capability
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.7,
         topK: 40,
@@ -66,21 +82,6 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       ]
     });
 
-    // Build the prompt with wall prompts and club persona if available
-    let prompt = getWallPrompt(clubName);
-    
-    if (clubPersona) {
-      prompt += `\n\n${clubPersona.personalityPrompt}`;
-    }
-
-    // Add grounding instructions if enabled
-    if (useGrounding) {
-      prompt += `\n\nIMPORTANT: Please use real-time data from web search to answer questions about current events, statistics, or factual information. Your response should be based on the most recent and accurate information available. If you use any information, please cite your sources.`;
-    }
-    
-    prompt += `\n\nUser: ${message}`;
-
-    const result = await chat.sendMessage(prompt);
     const response = await result.response;
     const text = response.text();
 
@@ -88,32 +89,19 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     let grounding = null;
     if (useGrounding && response.candidates?.[0]?.groundingMetadata) {
       const metadata = response.candidates[0].groundingMetadata;
-      grounding = {
-        sources: metadata.webSearchRetrievalResults?.map(result => ({
-          title: result.title,
-          url: result.url,
-          snippet: result.snippet
-        })) || [],
-        searchSuggestions: metadata.webSearchRetrievalResults?.map(result => result.snippet) || []
-      };
-
-      // If grounding is enabled but no sources were found, try to search again
-      if (grounding.sources.length === 0) {
-        const searchResult = await chat.sendMessage(
-          `Please search for and provide current, factual information about: ${message}`
-        );
-        const searchResponse = await searchResult.response;
-        const metadata = searchResponse.candidates?.[0]?.groundingMetadata;
-        if (metadata?.webSearchRetrievalResults) {
-          grounding = {
-            sources: metadata.webSearchRetrievalResults.map(result => ({
-              title: result.title,
-              url: result.url,
-              snippet: result.snippet
-            })),
-            searchSuggestions: metadata.webSearchRetrievalResults.map(result => result.snippet)
-          };
-        }
+      if (metadata.webSearchQueries && metadata.groundingSupports) {
+        grounding = {
+          sources: metadata.groundingChunks?.map(chunk => ({
+            title: chunk.web?.title || '',
+            url: chunk.web?.uri || '',
+            snippet: ''
+          })) || [],
+          searchQueries: metadata.webSearchQueries || [],
+          supports: metadata.groundingSupports?.map(support => ({
+            text: support.segment?.text || '',
+            confidence: Math.max(...(support.confidenceScores || [0]))
+          })) || []
+        };
       }
     }
 
