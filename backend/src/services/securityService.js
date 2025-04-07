@@ -82,31 +82,16 @@ async function validateMessage(message, clubName = null) {
       };
     }
     
-    // If it's a club-specific question but no club is specified, reject it
-    if (intent.isClubSpecific && !clubName) {
-      return {
-        isValid: false,
-        error: "Please specify which club you want to talk to about this topic."
-      };
-    }
-    
-    // If it's a general sports question but a club is specified, suggest removing the club context
-    if (!intent.isClubSpecific && clubName) {
-      return {
-        isValid: false,
-        error: "This seems to be a general sports question. Would you like to ask it without specifying a club?"
-      };
-    }
-    
+    // Allow both general sports questions and club-specific questions
     return {
       isValid: true,
-      intent
+      error: null
     };
   } catch (error) {
     console.error('Error in message validation:', error);
     return {
       isValid: false,
-      error: "An error occurred while processing your question. Please try again."
+      error: "An error occurred while validating your message. Please try again."
     };
   }
 }

@@ -29,16 +29,7 @@ connectToDatabase()
 
 // Middleware
 app.use(cors({
-  origin: [
-    'http://localhost:19006',
-    'http://localhost:3000',
-    'http://10.0.2.2:3000',
-    'http://192.168.1.100:3000',
-    /\.expo\.dev$/,
-    /\.expo\.io$/,
-    /exp:\/\//,
-    process.env.PUBLIC_BACKEND_URL
-  ],
+  origin: '*',  // Allow all origins for testing
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
