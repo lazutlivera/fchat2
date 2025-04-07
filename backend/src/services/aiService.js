@@ -42,9 +42,6 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
         topP: 0.95,
         maxOutputTokens: 1024,
       },
-      config: {
-        tools: [{ googleSearch: {} }],
-      }
     });
 
     // Create a chat instance with search tool
