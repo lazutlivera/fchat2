@@ -34,7 +34,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     }
 
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash",
+      model: "gemini-pro",
       tools: useGrounding ? [{ googleSearch: {} }] : undefined
     });
 
@@ -72,6 +72,11 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     if (clubPersona) {
       prompt += `\n\n${clubPersona.personalityPrompt}`;
     }
+
+    // Add grounding instructions if enabled
+    if (useGrounding) {
+      prompt += `\n\nIMPORTANT: Please use real-time data from web search to answer questions about current events, statistics, or factual information. Your response should be based on the most recent and accurate information available. If you use any information, please cite your sources.`;
+    }
     
     prompt += `\n\nUser: ${message}`;
 
@@ -91,6 +96,25 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
         })) || [],
         searchSuggestions: metadata.webSearchRetrievalResults?.map(result => result.snippet) || []
       };
+
+      // If grounding is enabled but no sources were found, try to search again
+      if (grounding.sources.length === 0) {
+        const searchResult = await chat.sendMessage(
+          `Please search for and provide current, factual information about: ${message}`
+        );
+        const searchResponse = await searchResult.response;
+        const metadata = searchResponse.candidates?.[0]?.groundingMetadata;
+        if (metadata?.webSearchRetrievalResults) {
+          grounding = {
+            sources: metadata.webSearchRetrievalResults.map(result => ({
+              title: result.title,
+              url: result.url,
+              snippet: result.snippet
+            })),
+            searchSuggestions: metadata.webSearchRetrievalResults.map(result => result.snippet)
+          };
+        }
+      }
     }
 
     return {
