@@ -33,34 +33,52 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       }
     }
 
-    // Configure the model with search as a tool
+    // Always configure search as a tool
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
-      tools: useGrounding ? [{ googleSearch: {} }] : undefined
+      tools: [{ googleSearch: {} }]
     });
 
-    // Build the prompt with wall prompts and club persona if available
+    // Build search context based on the message
+    let searchContext = message;
+    if (clubName) {
+      searchContext = `${clubName} ${message}`;
+    }
+
+    // First, try to get relevant search results
+    const searchResult = await model.generateContent({
+      contents: [{ 
+        role: "user", 
+        parts: [{ text: `Search for current information about: ${searchContext}` }] 
+      }],
+      generationConfig: {
+        temperature: 0.1,  // Lower temperature for search
+        maxOutputTokens: 1024,
+      }
+    });
+
+    // Build the prompt with wall prompts and club persona
     let prompt = getWallPrompt(clubName);
     
     if (clubPersona) {
       prompt += `\n\n${clubPersona.personalityPrompt}`;
     }
     
-    // Add search instruction for factual queries
-    if (useGrounding) {
-      prompt += `\n\nIMPORTANT INSTRUCTIONS:
-1. For any factual information about matches, events, or statistics, use the Google Search tool to find current information.
+    // Add search results and instructions
+    prompt += `\n\nIMPORTANT INSTRUCTIONS:
+1. Use the following search results to provide accurate, up-to-date information.
 2. NEVER show placeholder text like [Insert X Here] or template markers.
 3. NEVER show any internal tool commands or code in your response.
 4. Always format dates, times, and match information naturally in your response.
-5. If using search results, integrate them smoothly into your response.
+5. If you can't find specific information, be honest about it.
 6. Maintain your club persona's personality while delivering factual information.
-7. If you can't find specific information, be honest about it rather than using placeholders.`;
-    }
-    
-    prompt += `\n\nUser: ${message}`;
+7. Always cite your sources in the response.
 
-    // Generate content with search capability
+Search Results: ${searchResult.response.text()}
+
+User Question: ${message}`;
+
+    // Generate the final response
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
@@ -101,7 +119,7 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
 
     // Extract grounding metadata if available
     let grounding = null;
-    if (useGrounding && response.candidates?.[0]?.groundingMetadata) {
+    if (response.candidates?.[0]?.groundingMetadata) {
       const metadata = response.candidates[0].groundingMetadata;
       if (metadata.webSearchQueries && metadata.groundingSupports) {
         grounding = {
