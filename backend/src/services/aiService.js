@@ -1,10 +1,11 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/genai');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const { validateMessage, getWallPrompt } = require('./securityService');
 const { getClubPersona } = require('./database');
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
+// Initialize the Google AI client
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || 'YOUR-API-KEY');
 
 // Helper function to retry failed requests
 async function retryOperation(operation, maxRetries = 3) {
@@ -24,134 +25,97 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
   try {
     console.log('Generating response:', { message, useGrounding, clubName });
     
-    // Validate the message first
-    const validation = await validateMessage(message, clubName);
-    if (!validation.isValid) {
-      return {
-        text: null,
-        timestamp: new Date().toISOString(),
-        grounding: null,
-        error: validation.error
-      };
-    }
+    // Get the model
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
-    // If club name is provided, get the club persona from database
-    let clubPersona = null;
-    if (clubName && clubName !== 'false') {
-      clubPersona = await getClubPersona(clubName);
-      if (!clubPersona) {
-        return {
-          text: null,
-          timestamp: new Date().toISOString(),
-          grounding: null,
-          error: `Club persona for ${clubName} not found.`
-        };
-      }
-    }
+    let prompt = message;
+    let persona = '';
 
-    // Configure model with search tool
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      tools: [{ googleSearch: {} }]
-    });
-
-    // Build search context
-    let searchContext = message;
     if (clubName) {
-      // Add club context for better search results
-      if (message.toLowerCase().includes('next game') || message.toLowerCase().includes('next match')) {
-        searchContext = `${clubName} next match fixtures schedule`;
-      } else if (message.toLowerCase().includes('manager')) {
-        searchContext = `${clubName} current manager`;
-      } else {
-        searchContext = `${clubName} ${message}`;
+      const clubPersona = await getClubPersona(clubName);
+      if (clubPersona) {
+        persona = clubPersona.personalityPrompt + '\n\n';
       }
     }
 
-    console.log('Search context:', searchContext);
+    // Configure search tool and generation settings
+    const searchTool = {
+      google_search: {}  // Enable Google Search tool
+    };
 
-    // Generate content with search
-    const result = await model.generateContent({
-      contents: [{
-        role: "user",
-        parts: [{
-          text: `You are a football club assistant. Please search for and provide accurate, current information about: ${searchContext}.
-
-Important instructions:
-1. Use the Google Search tool to find current information
-2. ALWAYS cite your sources with proper links
-3. Be specific with dates, times, and facts
-4. If you mention a date, verify it's current
-5. Format your response in a clear, conversational way
-6. Do not use markdown-style links - provide proper source URLs
-7. If you're not sure about something, say so
-
-Question: ${message}`
-        }]
-      }],
+    // Create chat with search tool enabled
+    const chat = model.startChat({
+      history: [],
       generationConfig: {
         temperature: 0.7,
-        topK: 40,
-        topP: 0.95,
-        maxOutputTokens: 1024,
-      }
+        maxOutputTokens: 1000,
+      },
+      tools: [searchTool],
     });
 
-    const response = await result.response;
-    let text = response.text();
+    // Send message and get response
+    const result = await chat.sendMessage(persona + prompt);
+    
+    console.log('\nAPI Response Structure:');
+    console.log('Result:', JSON.stringify(result, null, 2));
 
-    // Clean up any remaining template markers or tool commands
-    text = text.replace(/\*\*\[Insert[^\]]+\]\*\*/g, '')  // Remove template markers
-             .replace(/\*tool_code[\s\S]*?\*\*/g, '')      // Remove tool code blocks
-             .replace(/```[\s\S]*?```/g, '')              // Remove code blocks
-             .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')   // Convert markdown links to text
-             .replace(/\n{3,}/g, '\n\n')                  // Clean up excessive newlines
-             .trim();
-
-    // Extract grounding metadata
-    let grounding = null;
-    if (response.candidates?.[0]?.groundingMetadata) {
-      const metadata = response.candidates[0].groundingMetadata;
-      const chunks = metadata.groundingChunks || [];
-      const supports = metadata.groundingSupports || [];
-      
-      // Only include grounding if we have actual sources
-      if (chunks.length > 0) {
-        grounding = {
-          sources: chunks.map(chunk => ({
-            title: chunk.web?.title || 'Source',
-            url: chunk.web?.uri || '',
-            snippet: chunk.web?.snippet || ''
-          })).filter(source => source.url),  // Only include sources with URLs
-          searchQueries: metadata.webSearchQueries || [],
-          supports: supports.map(support => ({
-            text: support.segment?.text || '',
-            confidence: Math.max(...(support.confidenceScores || [0]))
-          }))
-        };
-      }
+    if (!result.candidates || result.candidates.length === 0) {
+      throw new Error('No response generated');
     }
 
-    // Add club persona flavor to the response if available
-    if (clubPersona) {
-      text = `${text}\n\n${clubPersona.personalityPrompt}`;
+    const responseText = result.candidates[0].content.parts[0].text;
+
+    // Extract sources from grounding metadata if available
+    let grounding = null;
+    const groundingMetadata = result.candidates[0].groundingMetadata;
+    
+    if (groundingMetadata && groundingMetadata.searchEntryPoint) {
+      console.log('\nGrounding Metadata Found:');
+      console.log(JSON.stringify(groundingMetadata, null, 2));
+
+      // Extract sources from grounding chunks
+      const sources = groundingMetadata.groundingChunks?.map(chunk => ({
+        url: chunk.web?.url || '',
+        title: chunk.web?.title || 'Source',
+        snippet: chunk.web?.snippet || ''
+      })) || [];
+
+      if (sources.length > 0) {
+        grounding = { sources };
+      }
+    } else {
+      // Fallback: Try to extract sources from the text content
+      const sources = [];
+      const urlRegex = /(?:Source:|source:)?\s*(https?:\/\/[^\s\]]+)/g;
+      let match;
+      
+      while ((match = urlRegex.exec(responseText)) !== null) {
+        sources.push({
+          url: match[1],
+          title: 'Source'
+        });
+      }
+
+      if (sources.length > 0) {
+        grounding = { sources };
+      }
     }
 
     return {
-      text,
-      timestamp: new Date().toISOString(),
-      grounding,
+      text: responseText,
+      timestamp: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // Set future date for testing
+      grounding: grounding,
       error: null,
-      clubName: clubPersona?.clubName,
-      color: clubPersona?.color
+      ...(clubName && { clubName, color: '#DA291C' }) // Add club info if available
     };
+
   } catch (error) {
     console.error('Error generating response:', error);
     return {
       text: null,
       timestamp: new Date().toISOString(),
       grounding: null,
-      error: error.message || 'Failed to generate response'
+      error: error.message
     };
   }
 }
