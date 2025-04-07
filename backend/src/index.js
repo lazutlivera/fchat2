@@ -20,7 +20,8 @@ app.use(cors({
     'http://192.168.1.100:3000',
     /\.expo\.dev$/,
     /\.expo\.io$/,
-    /exp:\/\//
+    /exp:\/\//,
+    process.env.PUBLIC_BACKEND_URL
   ],
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization'],
