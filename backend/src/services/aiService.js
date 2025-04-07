@@ -1,11 +1,11 @@
-const { GoogleGenerativeAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const { validateMessage, getWallPrompt } = require('./securityService');
 const { getClubPersona } = require('./database');
 
 // Initialize the Google AI client
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || 'YOUR-API-KEY');
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || 'YOUR-API-KEY');
 
 // Helper function to retry failed requests
 async function retryOperation(operation, maxRetries = 3) {
