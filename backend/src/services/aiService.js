@@ -22,6 +22,8 @@ async function retryOperation(operation, maxRetries = 3) {
 
 async function generateResponse(message, useGrounding = true, clubName = null) {
   try {
+    console.log('Generating response:', { message, useGrounding, clubName });
+    
     // Validate the message first
     const validation = await validateMessage(message, clubName);
     if (!validation.isValid) {
@@ -50,68 +52,59 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
     // Configure model with search tool
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
-      tools: [{ googleSearch: {} }]  // Configure tools here only
+      tools: [{ googleSearch: {} }]
     });
 
-    // Build the initial prompt with search instructions
-    let searchPrompt = `You are a search assistant. Please search for current, real-time information about: ${message}`;
+    // Build search context
+    let searchContext = message;
     if (clubName) {
-      searchPrompt += ` in the context of ${clubName}`;
-    }
-    searchPrompt += `\n\nUse the Google Search tool to find the most up-to-date information. Return ONLY the raw search results.`;
-
-    // Get search results with retry
-    const searchResults = await retryOperation(async () => {
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: searchPrompt }] }],
-        generationConfig: {
-          temperature: 0.1,  // Lower temperature for search
-          maxOutputTokens: 1024,
-        }
-      });
-      return result.response;
-    });
-    
-    // Build the main prompt
-    let prompt = getWallPrompt(clubName);
-    
-    if (clubPersona) {
-      prompt += `\n\n${clubPersona.personalityPrompt}`;
+      // Add club context for better search results
+      if (message.toLowerCase().includes('next game') || message.toLowerCase().includes('next match')) {
+        searchContext = `${clubName} next match fixtures schedule`;
+      } else if (message.toLowerCase().includes('manager')) {
+        searchContext = `${clubName} current manager`;
+      } else {
+        searchContext = `${clubName} ${message}`;
+      }
     }
 
-    prompt += `\n\nIMPORTANT: You are responding in real-time. Today's date is ${new Date().toLocaleDateString()}. Use this current information from my search to answer:
+    console.log('Search context:', searchContext);
 
-${searchResults.text()}
+    // Generate content with search
+    const result = await model.generateContent({
+      contents: [{
+        role: "user",
+        parts: [{
+          text: `You are a football club assistant. Please search for and provide accurate, current information about: ${searchContext}.
 
-Now, based on this current information, please answer the user's question: ${message}
+Important instructions:
+1. Use the Google Search tool to find current information
+2. ALWAYS cite your sources with proper links
+3. Be specific with dates, times, and facts
+4. If you mention a date, verify it's current
+5. Format your response in a clear, conversational way
+6. Do not use markdown-style links - provide proper source URLs
+7. If you're not sure about something, say so
 
-Remember to:
-1. Use ONLY the current information from the search results
-2. Include specific dates and times when relevant
-3. Cite your sources
-4. Maintain your club persona's personality
-5. Be accurate and up-to-date`;
-
-    // Get final response with retry
-    const response = await retryOperation(async () => {
-      const result = await model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 1024,
-        }
-      });
-      return result.response;
+Question: ${message}`
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+        maxOutputTokens: 1024,
+      }
     });
 
+    const response = await result.response;
     let text = response.text();
 
     // Clean up any remaining template markers or tool commands
     text = text.replace(/\*\*\[Insert[^\]]+\]\*\*/g, '')  // Remove template markers
              .replace(/\*tool_code[\s\S]*?\*\*/g, '')      // Remove tool code blocks
              .replace(/```[\s\S]*?```/g, '')              // Remove code blocks
+             .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')   // Convert markdown links to text
              .replace(/\n{3,}/g, '\n\n')                  // Clean up excessive newlines
              .trim();
 
@@ -119,18 +112,29 @@ Remember to:
     let grounding = null;
     if (response.candidates?.[0]?.groundingMetadata) {
       const metadata = response.candidates[0].groundingMetadata;
-      grounding = {
-        sources: (metadata.groundingChunks || []).map(chunk => ({
-          title: chunk.web?.title || '',
-          url: chunk.web?.uri || '',
-          snippet: ''
-        })),
-        searchQueries: metadata.webSearchQueries || [],
-        supports: (metadata.groundingSupports || []).map(support => ({
-          text: support.segment?.text || '',
-          confidence: Math.max(...(support.confidenceScores || [0]))
-        }))
-      };
+      const chunks = metadata.groundingChunks || [];
+      const supports = metadata.groundingSupports || [];
+      
+      // Only include grounding if we have actual sources
+      if (chunks.length > 0) {
+        grounding = {
+          sources: chunks.map(chunk => ({
+            title: chunk.web?.title || 'Source',
+            url: chunk.web?.uri || '',
+            snippet: chunk.web?.snippet || ''
+          })).filter(source => source.url),  // Only include sources with URLs
+          searchQueries: metadata.webSearchQueries || [],
+          supports: supports.map(support => ({
+            text: support.segment?.text || '',
+            confidence: Math.max(...(support.confidenceScores || [0]))
+          }))
+        };
+      }
+    }
+
+    // Add club persona flavor to the response if available
+    if (clubPersona) {
+      text = `${text}\n\n${clubPersona.personalityPrompt}`;
     }
 
     return {
