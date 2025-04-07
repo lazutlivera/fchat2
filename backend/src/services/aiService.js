@@ -33,60 +33,23 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       }
     }
 
-    // Always configure search as a tool
+    // Configure model with search tool
     const model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
-      tools: [{ googleSearch: {} }]
-    });
-
-    // Build search context based on the message
-    let searchContext = message;
-    if (clubName) {
-      searchContext = `${clubName} ${message}`;
-    }
-
-    // First, try to get relevant search results
-    const searchResult = await model.generateContent({
-      contents: [{ 
-        role: "user", 
-        parts: [{ text: `Search for current information about: ${searchContext}` }] 
-      }],
-      generationConfig: {
-        temperature: 0.1,  // Lower temperature for search
-        maxOutputTokens: 1024,
-      }
-    });
-
-    // Build the prompt with wall prompts and club persona
-    let prompt = getWallPrompt(clubName);
-    
-    if (clubPersona) {
-      prompt += `\n\n${clubPersona.personalityPrompt}`;
-    }
-    
-    // Add search results and instructions
-    prompt += `\n\nIMPORTANT INSTRUCTIONS:
-1. Use the following search results to provide accurate, up-to-date information.
-2. NEVER show placeholder text like [Insert X Here] or template markers.
-3. NEVER show any internal tool commands or code in your response.
-4. Always format dates, times, and match information naturally in your response.
-5. If you can't find specific information, be honest about it.
-6. Maintain your club persona's personality while delivering factual information.
-7. Always cite your sources in the response.
-
-Search Results: ${searchResult.response.text()}
-
-User Question: ${message}`;
-
-    // Generate the final response
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.7,
         topK: 40,
         topP: 0.95,
         maxOutputTokens: 1024,
       },
+      config: {
+        tools: [{ googleSearch: {} }],
+      }
+    });
+
+    // Create a chat instance with search tool
+    const chat = model.startChat({
+      tools: [{ googleSearch: {} }],
       safetySettings: [
         {
           category: "HARM_CATEGORY_HARASSMENT",
@@ -107,7 +70,40 @@ User Question: ${message}`;
       ]
     });
 
-    const response = await result.response;
+    // Build the initial prompt with search instructions
+    let searchPrompt = `You are a search assistant. Please search for current, real-time information about: ${message}`;
+    if (clubName) {
+      searchPrompt += ` in the context of ${clubName}`;
+    }
+    searchPrompt += `\n\nUse the Google Search tool to find the most up-to-date information. Return ONLY the raw search results.`;
+
+    // Get search results
+    const searchResponse = await chat.sendMessage(searchPrompt);
+    const searchResults = await searchResponse.response;
+    
+    // Build the main prompt
+    let prompt = getWallPrompt(clubName);
+    
+    if (clubPersona) {
+      prompt += `\n\n${clubPersona.personalityPrompt}`;
+    }
+
+    prompt += `\n\nIMPORTANT: You are responding in real-time. Today's date is ${new Date().toLocaleDateString()}. Use this current information from my search to answer:
+
+${searchResults.text()}
+
+Now, based on this current information, please answer the user's question: ${message}
+
+Remember to:
+1. Use ONLY the current information from the search results
+2. Include specific dates and times when relevant
+3. Cite your sources
+4. Maintain your club persona's personality
+5. Be accurate and up-to-date`;
+
+    // Get final response
+    const finalResponse = await chat.sendMessage(prompt);
+    const response = await finalResponse.response;
     let text = response.text();
 
     // Clean up any remaining template markers or tool commands
@@ -117,24 +113,22 @@ User Question: ${message}`;
              .replace(/\n{3,}/g, '\n\n')                  // Clean up excessive newlines
              .trim();
 
-    // Extract grounding metadata if available
+    // Extract grounding metadata
     let grounding = null;
     if (response.candidates?.[0]?.groundingMetadata) {
       const metadata = response.candidates[0].groundingMetadata;
-      if (metadata.webSearchQueries && metadata.groundingSupports) {
-        grounding = {
-          sources: metadata.groundingChunks?.map(chunk => ({
-            title: chunk.web?.title || '',
-            url: chunk.web?.uri || '',
-            snippet: ''
-          })) || [],
-          searchQueries: metadata.webSearchQueries || [],
-          supports: metadata.groundingSupports?.map(support => ({
-            text: support.segment?.text || '',
-            confidence: Math.max(...(support.confidenceScores || [0]))
-          })) || []
-        };
-      }
+      grounding = {
+        sources: (metadata.groundingChunks || []).map(chunk => ({
+          title: chunk.web?.title || '',
+          url: chunk.web?.uri || '',
+          snippet: ''
+        })),
+        searchQueries: metadata.webSearchQueries || [],
+        supports: (metadata.groundingSupports || []).map(support => ({
+          text: support.segment?.text || '',
+          confidence: Math.max(...(support.confidenceScores || [0]))
+        }))
+      };
     }
 
     return {
