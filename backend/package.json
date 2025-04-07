@@ -1,24 +1,24 @@
 {
-  "name": "backend",
+  "name": "fchat2-backend",
   "version": "1.0.0",
+  "description": "Backend for FChat2 with MongoDB support",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "seed": "node src/seed.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@google/generative-ai": "^0.24.0",
-    "axios": "^1.8.4",
+    "@google/generative-ai": "^0.2.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^5.1.0"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.0.2"
   }
 }
