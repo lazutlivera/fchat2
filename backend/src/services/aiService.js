@@ -1,11 +1,8 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const { validateMessage, getWallPrompt } = require('./securityService');
 const { getClubPersona } = require('./database');
-
-// Initialize the Google AI client
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || 'YOUR-API-KEY');
 
 // Helper function to retry failed requests
 async function retryOperation(operation, maxRetries = 3) {
@@ -25,9 +22,6 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
   try {
     console.log('Generating response:', { message, useGrounding, clubName });
     
-    // Get the model
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
     let prompt = message;
     let persona = '';
 
@@ -38,63 +32,49 @@ async function generateResponse(message, useGrounding = true, clubName = null) {
       }
     }
 
-    // Configure search tool and generation settings
-    const searchTool = {
-      google_search: {}  // Enable Google Search tool
-    };
-
-    // Create chat with search tool enabled
-    const chat = model.startChat({
-      history: [],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1000,
+    // Make API request
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{
+            text: persona + prompt
+          }]
+        }],
+        tools: [{
+          google_search: {}
+        }]
       },
-      tools: [searchTool],
-    });
-
-    // Send message and get response
-    const result = await chat.sendMessage(persona + prompt);
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
     
     console.log('\nAPI Response Structure:');
-    console.log('Result:', JSON.stringify(result, null, 2));
+    console.log('Result:', JSON.stringify(response.data, null, 2));
 
-    if (!result.candidates || result.candidates.length === 0) {
+    if (!response.data.candidates || response.data.candidates.length === 0) {
       throw new Error('No response generated');
     }
 
-    const responseText = result.candidates[0].content.parts[0].text;
+    const responseText = response.data.candidates[0].content.parts[0].text;
 
     // Extract sources from grounding metadata if available
     let grounding = null;
-    const groundingMetadata = result.candidates[0].groundingMetadata;
+    const groundingMetadata = response.data.candidates[0].groundingMetadata;
     
-    if (groundingMetadata && groundingMetadata.searchEntryPoint) {
+    if (groundingMetadata && groundingMetadata.groundingChunks) {
       console.log('\nGrounding Metadata Found:');
       console.log(JSON.stringify(groundingMetadata, null, 2));
 
       // Extract sources from grounding chunks
-      const sources = groundingMetadata.groundingChunks?.map(chunk => ({
-        url: chunk.web?.url || '',
+      const sources = groundingMetadata.groundingChunks.map(chunk => ({
+        url: chunk.web?.uri || '',
         title: chunk.web?.title || 'Source',
         snippet: chunk.web?.snippet || ''
-      })) || [];
-
-      if (sources.length > 0) {
-        grounding = { sources };
-      }
-    } else {
-      // Fallback: Try to extract sources from the text content
-      const sources = [];
-      const urlRegex = /(?:Source:|source:)?\s*(https?:\/\/[^\s\]]+)/g;
-      let match;
-      
-      while ((match = urlRegex.exec(responseText)) !== null) {
-        sources.push({
-          url: match[1],
-          title: 'Source'
-        });
-      }
+      }));
 
       if (sources.length > 0) {
         grounding = { sources };

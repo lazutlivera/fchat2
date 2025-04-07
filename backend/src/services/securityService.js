@@ -1,8 +1,6 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || 'YOUR-API-KEY');
 
 // Wall prompts to restrict AI responses
 const WALL_PROMPTS = {
@@ -17,40 +15,45 @@ const WALL_PROMPTS = {
 
 async function validateMessage(message, clubName = null) {
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    
     // Prepare the wall prompt based on whether this is club-specific or general
     const wallPrompt = clubName 
       ? WALL_PROMPTS.CLUB_SPECIFIC.replace(/{CLUB_NAME}/g, clubName)
       : WALL_PROMPTS.GENERAL;
 
-    const chat = model.startChat({
-      history: [],
-      generationConfig: {
-        maxOutputTokens: 100,
-        temperature: 0,
+    // Make API request
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`,
+      {
+        contents: [{
+          parts: [{
+            text: `
+              ${wallPrompt}
+              
+              Analyze the following message and respond with ONLY "VALID" if it's appropriate to answer based on the above rules,
+              or "INVALID: [reason]" if it should not be answered.
+              
+              Message: "${message}"
+            `
+          }]
+        }]
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
-    const result = await chat.sendMessage(`
-      ${wallPrompt}
-      
-      Analyze the following message and respond with ONLY "VALID" if it's appropriate to answer based on the above rules,
-      or "INVALID: [reason]" if it should not be answered.
-      
-      Message: "${message}"
-    `);
-
-    if (!result.candidates || result.candidates.length === 0) {
+    if (!response.data.candidates || response.data.candidates.length === 0) {
       return { isValid: false, error: 'Failed to validate message' };
     }
 
-    const response = result.candidates[0].content.parts[0].text.trim();
+    const responseText = response.data.candidates[0].content.parts[0].text.trim();
     
-    if (response === 'VALID') {
+    if (responseText === 'VALID') {
       return { isValid: true, error: null };
     } else {
-      const reason = response.replace('INVALID:', '').trim();
+      const reason = responseText.replace('INVALID:', '').trim();
       return { isValid: false, error: reason };
     }
   } catch (error) {
