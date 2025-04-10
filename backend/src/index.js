@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const { generateResponse } = require('./services/aiService');
-const { connectToDatabase, createClubPersona, getClubPersona, getAllClubPersonas } = require('./services/database');
+const { connectToDatabase, createClubPersona, getClubPersona, getAllClubPersonas, getUsageStats } = require('./services/database');
 const mongoose = require('mongoose');
 
 const app = express();
@@ -14,18 +14,6 @@ console.log('Checking environment variables...');
 console.log('PORT:', process.env.PORT);
 console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
 console.log('GOOGLE_GEMINI_API_KEY exists:', !!process.env.GOOGLE_GEMINI_API_KEY);
-
-// Connect to MongoDB
-connectToDatabase()
-  .then(async () => {
-    // Check if we have any club personas
-    const personas = await getAllClubPersonas();
-    console.log(`Found ${personas.length} club personas in database`);
-    if (personas.length === 0) {
-      console.log('No club personas found. You may need to run the seed script.');
-    }
-  })
-  .catch(console.error);
 
 // Middleware
 app.use(cors({
@@ -40,6 +28,18 @@ app.use(express.json());
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Usage statistics endpoint
+app.get('/api/usage/stats', async (req, res) => {
+  try {
+    const timeframe = req.query.timeframe || 'day';
+    const stats = await getUsageStats(timeframe);
+    res.json(stats);
+  } catch (error) {
+    console.error('Error getting usage stats:', error);
+    res.status(500).json({ error: 'Failed to get usage statistics' });
+  }
 });
 
 // Chat endpoint with grounding
@@ -129,8 +129,15 @@ app.get('/api/clubs/:clubName', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-  console.log(`Health check endpoint: http://localhost:${port}/api/health`);
-}); 
+// Connect to database and start server
+connectToDatabase()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+      console.log(`Health check endpoint: http://localhost:${port}/api/health`);
+    });
+  })
+  .catch((error) => {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }); 
