@@ -34,11 +34,22 @@ function processGroundingMetadata(groundingMetadata) {
   return sources.length > 0 ? { sources } : null;
 }
 
-async function constructPrompt(message, clubName) {
+async function constructPrompt(message, clubName, conversationHistory = []) {
   const currentDate = new Date().toISOString();
+
+  let historyPrompt = '';
+  if (conversationHistory.length > 0) {
+    historyPrompt = 'Previous conversation:\n';
+    conversationHistory.forEach(msg => {
+      const role = msg.sender === 'user' ? 'User' : 'Assistant';
+      historyPrompt += `${role}: ${msg.text}\n`;
+    });
+    historyPrompt += '\n';
+  }
+
   let basePrompt = `Current date and time: ${currentDate}
 
-IMPORTANT: For questions about upcoming matches, fixtures, or recent results:
+${historyPrompt}IMPORTANT: For questions about upcoming matches, fixtures, or recent results:
 1. ALWAYS check the grounding sources first
 2. Provide the EXACT date, time, and opponent from the sources
 3. If no specific fixture information is found in grounding, state that clearly
@@ -61,11 +72,11 @@ User question: ${message}`;
   };
 }
 
-async function generateResponse(message, useGrounding = true, clubName = null) {
+async function generateResponse(message, useGrounding = true, clubName = null, conversationHistory = []) {
   try {
-    console.log('Generating response:', { message, useGrounding, clubName });
+    console.log('Generating response:', { message, useGrounding, clubName, conversationHistory });
     
-    const { basePrompt, persona } = await constructPrompt(message, clubName);
+    const { basePrompt, persona } = await constructPrompt(message, clubName, conversationHistory);
     const promptText = `You are a sports assistant that ALWAYS checks grounding sources for the most up-to-date information.
 When asked about fixtures, matches, or results:
 1. IMMEDIATELY check the grounding sources
@@ -107,12 +118,11 @@ ${persona}${basePrompt}`;
     const responseText = response.data.candidates[0].content.parts[0].text;
     const grounding = processGroundingMetadata(response.data.candidates[0].groundingMetadata);
 
-    // Calculate token usage
+
     const inputTokens = Math.ceil(promptText.length / 4); // Rough estimate
     const outputTokens = Math.ceil(responseText.length / 4); // Rough estimate
     const totalTokens = inputTokens + outputTokens;
 
-    // Log usage statistics
     await logAIUsage({
       clubName,
       inputTokens,
@@ -128,7 +138,8 @@ ${persona}${basePrompt}`;
       timestamp: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
       grounding,
       error: null,
-      ...(clubName && { clubName, color: '#DA291C' })
+      color: '#DA291C',
+      ...(clubName && { clubName })
     };
 
   } catch (error) {
@@ -137,7 +148,8 @@ ${persona}${basePrompt}`;
       text: null,
       timestamp: new Date().toISOString(),
       grounding: null,
-      error: error.message
+      error: error.message,
+      color: '#DA291C'
     };
   }
 }
