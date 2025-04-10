@@ -22,8 +22,46 @@ const clubPersonaSchema = new mongoose.Schema({
   }
 });
 
-// Create model
+// AI Usage tracking schema
+const aiUsageSchema = new mongoose.Schema({
+  timestamp: {
+    type: Date,
+    default: Date.now
+  },
+  clubName: {
+    type: String,
+    required: false
+  },
+  inputTokens: {
+    type: Number,
+    required: true
+  },
+  outputTokens: {
+    type: Number,
+    required: true
+  },
+  totalTokens: {
+    type: Number,
+    required: true
+  },
+  groundingUsed: {
+    type: Boolean,
+    required: true
+  },
+  sourceCount: {
+    type: Number,
+    default: 0
+  },
+  sources: [{
+    url: String,
+    title: String,
+    snippet: String
+  }]
+});
+
+// Create models
 const ClubPersona = mongoose.model('ClubPersona', clubPersonaSchema);
+const AIUsage = mongoose.model('AIUsage', aiUsageSchema);
 
 // Database connection function
 async function connectToDatabase() {
@@ -107,11 +145,82 @@ async function deleteClubPersona(clubName) {
   }
 }
 
+// AI Usage tracking functions
+async function logAIUsage(usageData) {
+  try {
+    const usage = new AIUsage(usageData);
+    await usage.save();
+    return usage;
+  } catch (error) {
+    console.error('Error logging AI usage:', error);
+    throw error;
+  }
+}
+
+async function getUsageStats(timeframe = 'day') {
+  try {
+    const now = new Date();
+    let startDate;
+
+    switch (timeframe) {
+      case 'hour':
+        startDate = new Date(now.getTime() - 60 * 60 * 1000);
+        break;
+      case 'day':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        break;
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      default:
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    }
+
+    const stats = await AIUsage.aggregate([
+      {
+        $match: {
+          timestamp: { $gte: startDate }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalInputTokens: { $sum: '$inputTokens' },
+          totalOutputTokens: { $sum: '$outputTokens' },
+          totalTokens: { $sum: '$totalTokens' },
+          totalRequests: { $sum: 1 },
+          groundingRequests: {
+            $sum: { $cond: [{ $eq: ['$groundingUsed', true] }, 1, 0] }
+          },
+          totalSources: { $sum: '$sourceCount' }
+        }
+      }
+    ]);
+
+    return stats[0] || {
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      totalRequests: 0,
+      groundingRequests: 0,
+      totalSources: 0
+    };
+  } catch (error) {
+    console.error('Error getting usage stats:', error);
+    throw error;
+  }
+}
+
 module.exports = {
   connectToDatabase,
   createClubPersona,
   getClubPersona,
   getAllClubPersonas,
   updateClubPersona,
-  deleteClubPersona
+  deleteClubPersona,
+  logAIUsage,
+  getUsageStats
 }; 

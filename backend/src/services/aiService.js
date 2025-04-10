@@ -1,10 +1,15 @@
 const axios = require('axios');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
-const { validateMessage, getWallPrompt } = require('./securityService');
-const { getClubPersona } = require('./database');
+const { getClubPersona, logAIUsage } = require('./database');
 
-// Helper function to retry failed requests
+const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const RESPONSE_INSTRUCTIONS = `1. Always prioritize using the most recent data from grounding sources
+2. For questions about matches, fixtures, or current events, provide specific dates and details
+3. Keep responses concise and directly answer the question first
+4. Only add historical context if relevant to the current question
+5. If the grounding sources provide match/fixture information, always include that in your response`;
+
 async function retryOperation(operation, maxRetries = 3) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -12,19 +17,26 @@ async function retryOperation(operation, maxRetries = 3) {
     } catch (error) {
       console.error(`Attempt ${attempt} failed:`, error.message);
       if (attempt === maxRetries) throw error;
-      // Wait before retrying (exponential backoff)
       await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
     }
   }
 }
 
-async function generateResponse(message, useGrounding = true, clubName = null) {
-  try {
-    console.log('Generating response:', { message, useGrounding, clubName });
-    
-    // Process temporal context
-    const currentDate = new Date().toISOString();
-    let prompt = `Current date and time: ${currentDate}
+function processGroundingMetadata(groundingMetadata) {
+  if (!groundingMetadata?.groundingChunks) return null;
+
+  const sources = groundingMetadata.groundingChunks.map(chunk => ({
+    url: chunk.web?.uri || '',
+    title: chunk.web?.title || 'Source',
+    snippet: chunk.web?.snippet || ''
+  }));
+
+  return sources.length > 0 ? { sources } : null;
+}
+
+async function constructPrompt(message, clubName) {
+  const currentDate = new Date().toISOString();
+  let basePrompt = `Current date and time: ${currentDate}
 
 IMPORTANT: For questions about upcoming matches, fixtures, or recent results:
 1. ALWAYS check the grounding sources first
@@ -33,40 +45,28 @@ IMPORTANT: For questions about upcoming matches, fixtures, or recent results:
 4. Do not include historical information unless specifically asked
 
 User question: ${message}`;
-    let persona = '';
 
-    if (clubName) {
-      const clubPersona = await getClubPersona(clubName);
-      if (clubPersona) {
-        persona = `${clubPersona.personalityPrompt}
+  let persona = RESPONSE_INSTRUCTIONS;
 
-Instructions for responding:
-1. Always prioritize using the most recent data from grounding sources
-2. For questions about matches, fixtures, or current events, provide specific dates and details
-3. Keep responses concise and directly answer the question first
-4. Only add historical context if relevant to the current question
-5. If the grounding sources provide match/fixture information, always include that in your response
-
-`;
-      }
-    } else {
-      persona = `Instructions for responding:
-1. Always prioritize using the most recent data from grounding sources
-2. For questions about matches, fixtures, or current events, provide specific dates and details
-3. Keep responses concise and directly answer the question first
-4. Only add historical context if relevant to the current question
-5. If the grounding sources provide match/fixture information, always include that in your response
-
-`;
+  if (clubName) {
+    const clubPersona = await getClubPersona(clubName);
+    if (clubPersona) {
+      persona = `${clubPersona.personalityPrompt}\n\n${RESPONSE_INSTRUCTIONS}`;
     }
+  }
 
-    // Make API request
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GOOGLE_GEMINI_API_KEY}`,
-      {
-        contents: [{
-          parts: [{
-            text: `You are a football assistant that ALWAYS checks grounding sources for the most up-to-date information.
+  return {
+    basePrompt,
+    persona
+  };
+}
+
+async function generateResponse(message, useGrounding = true, clubName = null) {
+  try {
+    console.log('Generating response:', { message, useGrounding, clubName });
+    
+    const { basePrompt, persona } = await constructPrompt(message, clubName);
+    const promptText = `You are a sports assistant that ALWAYS checks grounding sources for the most up-to-date information.
 When asked about fixtures, matches, or results:
 1. IMMEDIATELY check the grounding sources
 2. Extract and state the EXACT fixture details (date, time, opponent)
@@ -74,19 +74,28 @@ When asked about fixtures, matches, or results:
 4. NEVER make up dates or fixtures
 5. Keep responses focused and direct
 
-${persona}${prompt}`
+${persona}${basePrompt}`;
+
+    const response = await retryOperation(async () => {
+      return await axios.post(
+        `${API_URL}?key=${process.env.GOOGLE_GEMINI_API_KEY}`,
+        {
+          contents: [{
+            parts: [{
+              text: promptText
+            }]
+          }],
+          tools: [{
+            google_search: {}
           }]
-        }],
-        tools: [{
-          google_search: {}
-        }]
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json'
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
         }
-      }
-    );
+      );
+    });
     
     console.log('\nAPI Response Structure:');
     console.log('Result:', JSON.stringify(response.data, null, 2));
@@ -96,33 +105,30 @@ ${persona}${prompt}`
     }
 
     const responseText = response.data.candidates[0].content.parts[0].text;
+    const grounding = processGroundingMetadata(response.data.candidates[0].groundingMetadata);
 
-    // Extract sources from grounding metadata if available
-    let grounding = null;
-    const groundingMetadata = response.data.candidates[0].groundingMetadata;
-    
-    if (groundingMetadata && groundingMetadata.groundingChunks) {
-      console.log('\nGrounding Metadata Found:');
-      console.log(JSON.stringify(groundingMetadata, null, 2));
+    // Calculate token usage
+    const inputTokens = Math.ceil(promptText.length / 4); // Rough estimate
+    const outputTokens = Math.ceil(responseText.length / 4); // Rough estimate
+    const totalTokens = inputTokens + outputTokens;
 
-      // Extract sources from grounding chunks
-      const sources = groundingMetadata.groundingChunks.map(chunk => ({
-        url: chunk.web?.uri || '',
-        title: chunk.web?.title || 'Source',
-        snippet: chunk.web?.snippet || ''
-      }));
-
-      if (sources.length > 0) {
-        grounding = { sources };
-      }
-    }
+    // Log usage statistics
+    await logAIUsage({
+      clubName,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      groundingUsed: !!grounding,
+      sourceCount: grounding?.sources?.length || 0,
+      sources: grounding?.sources || []
+    });
 
     return {
       text: responseText,
-      timestamp: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // Set future date for testing
-      grounding: grounding,
+      timestamp: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      grounding,
       error: null,
-      ...(clubName && { clubName, color: '#DA291C' }) // Add club info if available
+      ...(clubName && { clubName, color: '#DA291C' })
     };
 
   } catch (error) {
